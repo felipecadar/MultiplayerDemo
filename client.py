@@ -1,0 +1,287 @@
+from __future__ import division
+import sys, os, socket
+from _thread import *
+import math, random
+import datetime
+import pygame
+
+from protocol import read_command, set_command, get_ip, BattleProtocol
+
+colors = {0:[0,0,0], 1:[255,0,0], 2:[0,255,0], 3:[0,0,255]}
+
+def load_image_convert_alpha(filename):
+    """Load an image with the given filename from the images directory"""
+    return pygame.image.load(os.path.join('images', filename)).convert_alpha()
+
+def draw_centered(surface1, surface2, position):
+    """Draw surface1 onto surface2 with center at position"""
+    rect = surface1.get_rect()
+    rect = rect.move(position[0]-rect.width//2, position[1]-rect.height//2)
+    surface2.blit(surface1, rect)
+
+def rotate_center(image, rect, angle):
+        """rotate the given image around its center & return an image & rect"""
+        rotate_image = pygame.transform.rotate(image, angle)
+        rotate_rect = rotate_image.get_rect(center=rect.center)
+        return rotate_image,rotate_rect
+
+def distance(p, q):
+    """Helper function to calculate distance between 2 points"""
+    return math.sqrt((p[0]-q[0])**2 + (p[1]-q[1])**2)
+
+class Ship():
+    def __init__(self, position):
+        self.image_off = load_image_convert_alpha("spaceship-off.png")
+        self.image_on = load_image_convert_alpha("spaceship-on.png")
+
+        self.position = position[:]
+        self.speed = 0
+        self.angle = 0
+        self.active_missiles = []
+        self.is_on = False
+        self.direction = [0,-1]
+        self.fire_missile = 0
+
+    def draw(self, game_screen):
+        if self.is_on:
+            new_image, rect = rotate_center(self.image_on, self.image_on.get_rect(), self.angle)
+        else:
+            new_image, rect = rotate_center(self.image_off, self.image_off.get_rect(), self.angle)
+        
+        draw_centered(new_image, game_screen, self.position)
+
+    def move(self):
+        # calculate the direction from the angle variable
+        self.direction[0] = math.sin(-math.radians(self.angle))
+        self.direction[1] = -math.cos(math.radians(self.angle))
+
+        # calculate the position from the direction and speed
+        self.position[0] += self.direction[0]*self.speed
+        self.position[1] += self.direction[1]*self.speed
+
+        if self.fire_missile == 1:
+            self.fire()
+            self.fire_missile = 0
+
+    def fire(self):
+        adjust = [0, 0]
+        adjust[0] = math.sin(-math.radians(self.angle))*self.image.get_width()
+        adjust[1] = -math.cos(math.radians(self.angle))*self.image.get_height()
+        new_missile = Missile((self.position[0]+adjust[0],\
+                               self.position[1]+adjust[1]/2),\
+                               self.angle)
+        self.active_missiles.append(new_missile)
+
+    def size(self):
+        return max(self.image.get_height(),self.image.get_width())
+
+    def radius(self):
+        return self.image.get_width()/2
+
+class Missile():
+    def __init__(self, position, angle, speed=15):
+        self.angle = angle
+        self.direction = [0, 0]
+        self.speed = speed        
+        self.image = load_image_convert_alpha("missile.png")
+        self.position = list(position[:])
+        self.speed = speed
+
+    def draw_on(self, screen):
+        draw_centered(self.image, screen, self.position)
+
+    def size(self):
+        return max(self.image.get_height(), self.image.get_width())
+
+    def radius(self):
+        return self.image.get_width()/2
+
+    def move(self):
+        self.direction[0] = math.sin(-math.radians(self.angle))
+        self.direction[1] = -math.cos(math.radians(self.angle))
+        self.position[0] += self.direction[0]*self.speed
+        self.position[1] += self.direction[1]*self.speed
+
+class Game(object):
+    REFRESH, START, RESTART = range(pygame.USEREVENT, pygame.USEREVENT+3)
+
+    def __init__(self, connection):
+        pygame.mixer.init()
+        pygame.mixer.pre_init(44100, -16, 2, 2048)
+        pygame.init()
+
+        self.big_font = pygame.font.SysFont(None, 100)
+        self.medium_font = pygame.font.SysFont(None, 50)
+        self.small_font = pygame.font.SysFont(None, 25)
+
+        self.position = [0,0]
+        self.angle = 0
+        self.fire = 0
+        self.player = -1
+        self.conn = connection
+
+        self.width = 800
+        self.height = 600
+        self.screen = pygame.display.set_mode((self.width, self.height))
+
+        self.bg_color = 0, 0, 0
+
+        self.FPS = 30
+        pygame.time.set_timer(self.REFRESH, 1000//self.FPS)
+        
+        self.ship = Ship(self.position)
+        self.enimies_ships = {}
+
+        self.fire_time = datetime.datetime.now()
+        self.missiles = []
+
+    def run(self):
+
+        # Inicia as primeiras naves inimigas 
+        ans = conn.receive()
+        command = read_command(ans)
+        self.position = command[:2]
+        self.angle = command[1]
+        self.fire = 0
+        self.player = command[4]
+
+        ans = conn.receive()
+        enimies = [read_command(cmd) for cmd in enimies_strs.split(";")]
+        for e in enimies:
+            pos = e[0:2]
+            angle = e[2]
+            fire = e[3]
+            player_id = e[4]
+
+            ship = Ship(position)
+            ship.angle = angle
+            self.enimies_ships[player_id] = ship
+            
+        running = True
+        while running:
+            event = pygame.event.wait()
+            if event.type == pygame.QUIT:
+                running = False 
+            keys = pygame.key.get_pressed()
+            
+            self.fire = 0            
+            if keys[pygame.K_SPACE]:
+                new_time = datetime.datetime.now()
+                if new_time - self.fire_time > datetime.timedelta(seconds=0.15):
+                    self.ship.fire()
+                    self.fire_time = new_time
+                    self.fire = 1
+           
+            if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+                self.ship.angle -= 10
+                self.ship.angle %= 360
+
+            if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+                self.ship.angle += 10
+                self.ship.angle %= 360
+
+            if keys[pygame.K_UP] or keys[pygame.K_w]:
+                self.ship.is_on = True
+                if self.ship.speed < 20:
+                    self.ship.speed += 1
+            else:
+                if self.ship.speed > 0:
+                    self.ship.speed -= 1
+                self.ship.is_on = False   
+
+            if len(self.ship.active_missiles) > 0:
+                self.missiles_physics()
+
+            # do the spaceship physics
+
+
+            self.conn.send(set_command(self.position[0], self.position[1], self.angle, self.fire, self.player))
+            enimies = self.receive()
+            enimies = [read_command(cmd) for cmd in enimies.split(";")]
+
+            self.update_ship(self.ship)
+
+            for e in enimies:
+                pos = e[0:2]
+                angle = e[2]
+                fire = e[3]
+                player_id = e[4]
+
+                self.enimies_ships[player_id].position = pos
+                self.enimies_ships[player_id].angle = angle
+                self.enimies_ships[player_id].fire_missile = fire
+
+                self.update_ship(self.enimies_ships[player_id])
+
+            self.draw()
+
+    def update_ship(self, ship):
+        ship.move()
+        if len(ship.active_missiles) >  0:
+            for missile in ship.active_missiles:
+                missile.move()
+
+    def draw(self):
+        self.screen.fill(self.bg_color)
+        self.spaceship.draw_on(self.screen)
+        if len(self.spaceship.active_missiles) >  0:
+            for missile in self.spaceship.active_missiles:
+                missile.draw_on(self.screen)
+
+        for e_ship in self.enimies_ships:
+            e_ship.draw_on(self.screen)
+
+            if len(e_ship.active_missiles) >  0:
+                for missile in e_ship.active_missiles:
+                    missile.draw_on(self.screen)
+
+        pygame.display.flip()
+
+    def welcome_screen(self):
+        init_game = 0
+        while True:
+
+            if init_game == 1:
+                reply = "init"
+                break
+            else:
+                reply = "wait"
+            
+            print("Sending " + reply)
+            n.send(reply)
+
+            ans = n.receive()
+            print("Received " + ans)
+            if ans == "play":
+                init_game = 1
+
+            self.players = self.welcome_asteroids = self.big_font.render("Battle",\
+                                                True, (255, 215, 0))
+            self.welcome_desc =  self.medium_font.render(\
+            "[Press Space] to begin! {} players online".format(ans), True, (35, 107, 142))
+
+            keys = pygame.key.get_pressed()
+
+            if keys[pygame.K_SPACE]:
+                init_game = 1
+
+            self.screen.fill(self.bg_color)
+
+            # draw the welcome texts
+            draw_centered(self.welcome_asteroids, self.screen,\
+                (self.width//2, self.height//2\
+                    -self.welcome_asteroids.get_height()))
+
+            draw_centered(self.welcome_desc, self.screen,\
+                (self.width//2, self.height//2\
+                    +self.welcome_desc.get_height()))
+    
+            pygame.display.flip()
+
+
+if __name__ == "__main__":
+    
+    n = BattleProtocol()
+    game = Game(n)
+    game.welcome_screen()
+    game.run()
