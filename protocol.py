@@ -26,7 +26,8 @@ class BattleProtocol:
         self.server = get_ip()
         self.port = 5555
         self.addr = (self.server, self.port)
-        self.connect()
+        while not self.connect():
+            pass
         # self.command = self.receive()
 
     # def getCommand(self):
@@ -36,9 +37,10 @@ class BattleProtocol:
         try:
             self.client.connect(self.addr)
             # return self.client.recv(2048).decode()
+            return True
         except:
             print("Fail to Connect " + self.addr[0] + " " + str(self.addr[1]))
-            pass
+            return False
 
     def send(self, data):
         try:

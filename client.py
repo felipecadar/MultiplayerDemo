@@ -30,9 +30,13 @@ def distance(p, q):
     return math.sqrt((p[0]-q[0])**2 + (p[1]-q[1])**2)
 
 class Ship():
-    def __init__(self, position):
-        self.image_off = load_image_convert_alpha("ship_off.png")
-        self.image_on = load_image_convert_alpha("ship_on.png")
+    def __init__(self, position, color=""):
+        if color == "friend":
+            self.image_off = load_image_convert_alpha("friend_ship_off.png")
+            self.image_on = load_image_convert_alpha("friend_ship_on.png")
+        else:
+            self.image_off = load_image_convert_alpha("enemy_ship_off.png")
+            self.image_on = load_image_convert_alpha("enemy_ship_on.png")
 
         self.position = position[:]
         self.speed = 0
@@ -68,9 +72,6 @@ class Ship():
         self.position[1] = min(self.position[1], self.height)
         self.position[1] = max(self.position[1], 0)
 
-        if self.fire_missile == 1:
-            self.fire()
-            self.fire_missile = 0
 
     def fire(self):
         adjust = [0, 0]
@@ -130,15 +131,16 @@ class Game(object):
         self.small_font = pygame.font.SysFont(None, 25)
 
         self.angle = 0
-        self.fire = 0
         self.player = -1
         self.conn = connection
+        self.hit = 0
 
         self.width = 800
         self.height = 600
         self.screen = pygame.display.set_mode((self.width, self.height))
 
         self.bg_color = 255, 255, 255
+        self.fire_missile = 0
 
         self.FPS = 30
         pygame.time.set_timer(self.REFRESH, 1000//self.FPS)
@@ -147,17 +149,15 @@ class Game(object):
         self.enimies_ships = {}
 
         self.fire_time = datetime.datetime.now()
-        self.missiles = []
 
     def run(self):
 
         # Inicia as primeiras naves inimigas 
         ans = self.conn.receive()
         command = read_command(ans)
-        self.ship = Ship(command[:2])
+        self.ship = Ship(command[:2], "friend")
         self.ship.angle = command[1]
-        self.fire = 0
-        self.player = command[4]
+        self.player = int(float(command[4]))
 
         self.conn.send("ok")
         ans = self.conn.receive()
@@ -166,7 +166,6 @@ class Game(object):
         for e in enimies:
             pos = e[0:2]
             angle = e[2]
-            fire = e[3]
             player_id = e[4]
 
             ship = Ship(pos)
@@ -175,18 +174,18 @@ class Game(object):
             
         running = True
         while running:
+            self.fire_missile = 0
+            
             event = pygame.event.wait()
             if event.type == pygame.QUIT:
                 running = False 
             keys = pygame.key.get_pressed()
             
-            self.fire = 0            
             if keys[pygame.K_SPACE]:
                 new_time = datetime.datetime.now()
-                if new_time - self.fire_time > datetime.timedelta(seconds=0.15):
-                    self.ship.fire()
+                if new_time - self.fire_time > datetime.timedelta(seconds=0.25):
+                    self.fire_missile = 1
                     self.fire_time = new_time
-                    self.fire = 1
            
             if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
                 self.ship.angle -= 10
@@ -206,29 +205,53 @@ class Game(object):
                 self.ship.is_on = False   
 
 
-            self.conn.send(set_command([self.ship.position[0], self.ship.position[1], self.ship.angle, self.fire, self.player]))
+            self.conn.send(set_command([self.ship.position[0], self.ship.position[1], self.ship.angle, self.fire_missile, self.player]))
             enimies = self.conn.receive()
             print("RECIEVE: " + enimies)
+            if enimies.find("HIT") != -1:
+                self.endGame(enimies)
+                running = False
+                break
+
             enimies = [read_command(cmd) for cmd in enimies.split(";")]
 
             self.update_ship(self.ship)
+            if self.fire_missile:
+                print("SENDINF FIRE NOW")
+                self.ship.fire()
 
             for e in enimies:
                 pos = e[0:2]
                 angle = e[2]
                 fire = e[3]
-                player_id = e[4]
+                player_id = int(float(e[4]))
+
+                if self.enimies_ships[player_id].position == pos:
+                    self.enimies_ships[player_id].is_on = False
+                else:
+                    self.enimies_ships[player_id].is_on = True
 
                 self.enimies_ships[player_id].position = pos
                 self.enimies_ships[player_id].angle = angle
-                self.enimies_ships[player_id].fire_missile = fire
+                
 
                 self.update_ship(self.enimies_ships[player_id])
+                if fire: self.enimies_ships[player_id].fire()
 
             self.draw()
 
+            for m in self.ship.active_missiles:
+                for i in self.enimies_ships.keys():
+                    if distance(m.position, self.enimies_ships[i].position) < 10:
+                        print("PLAYER {} HIT PLAYER {}".format(self.player, i))
+                        self.conn.send("HIT,{},{}".format(int(self.player), int(i)))
+                        running = False
+                        self.endGame("HIT,{},{}".format(int(self.player), int(i)))
+                        break
+
     def update_ship(self, ship):
         ship.move()
+
         if len(ship.active_missiles) >  0:
             remove_list = []
             for i in range(len(ship.active_missiles)):
@@ -237,9 +260,7 @@ class Game(object):
                     remove_list.append(i)
 
             for i in remove_list[::-1]:
-                # ship.active_missiles.pop(i)
                 del ship.active_missiles[i]
-                    
 
     def draw(self):
         self.screen.fill(self.bg_color)
@@ -256,7 +277,46 @@ class Game(object):
                 for missile in e_ship.active_missiles:
                     missile.draw_on(self.screen)
 
+        self.draw_player_number()
         pygame.display.flip()
+    
+    def draw_player_number(self):
+        player_text = self.small_font.render("Player {}".format(self.player), True, (0,0,0))
+        draw_centered(player_text, self.screen, (self.width//2, player_text.get_height()))
+
+    def endGame(self, command):
+        running = True
+        winner, loser = [int(i) for i in command.split(',')[1:]]
+        if self.player == winner:
+            self.title = self.big_font.render("Victory!", True, (255,215,0))
+        else:
+            self.title = self.big_font.render("Sorry :(", True, (255,215,0))
+        
+        self.reulst = self.medium_font.render("Player {} ended player {}".format(winner, loser), True, (35, 107, 142))
+        self.return_msg = self.medium_font.render("Press [ENTER] to exit".format(winner, loser), True, (35, 107, 142))
+
+        while running:
+            self.screen.fill(self.bg_color)
+
+            # draw the ending texts
+            draw_centered(self.title, self.screen,\
+                (self.width//2, self.height//2\
+                    -self.title.get_height()))
+
+            draw_centered(self.reulst, self.screen,\
+                (self.width//2, self.height//2\
+                    +self.reulst.get_height()))
+
+            draw_centered(self.return_msg, self.screen,\
+                (self.width//2, self.height//2\
+                    +self.reulst.get_height() + self.return_msg.get_height()))
+
+            pygame.display.flip()
+
+            for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_RETURN:
+                        running = False
 
     def welcome_screen(self):
         init_game = 0
