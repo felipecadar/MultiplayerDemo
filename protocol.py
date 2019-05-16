@@ -15,7 +15,7 @@ def get_ip():
 def read_command(str):
     mycomm = str.split(",")
     # print(mycomm)
-    return list(map(int, mycomm))
+    return list(map(float, mycomm))
 
 def set_command(comm):
     return ",".join(map(str, comm))
@@ -37,6 +37,7 @@ class BattleProtocol:
             self.client.connect(self.addr)
             # return self.client.recv(2048).decode()
         except:
+            print("Fail to Connect " + self.addr[0] + " " + str(self.addr[1]))
             pass
 
     def send(self, data):
