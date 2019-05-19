@@ -242,7 +242,7 @@ class Game(object):
 
             for m in self.ship.active_missiles:
                 for i in self.enimies_ships.keys():
-                    if distance(m.position, self.enimies_ships[i].position) < 10:
+                    if distance(m.position, self.enimies_ships[i].position) < 15:
                         print("PLAYER {} HIT PLAYER {}".format(self.player, i))
                         self.conn.send("HIT,{},{}".format(int(self.player), int(i)))
                         running = False
@@ -343,7 +343,7 @@ class Game(object):
 
             for event in pygame.event.get():
                 if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_RETURN:
+                    if event.key == pygame.K_SPACE and ans != "1":
                         init_game = 1
 
             self.screen.fill(self.bg_color)
